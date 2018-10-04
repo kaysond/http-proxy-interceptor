@@ -1,0 +1,10 @@
+language: node_js
+node_js:
+	- "4"
+	- "6"
+	- "8"
+	- "node"
+	- "lts/*"
+notifications:
+	email:
+		- kaysond@hotmail.com

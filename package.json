@@ -1,6 +1,6 @@
 {
   "name": "http-proxy-interceptor",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "middleware for node-http-proxy to modify responses using streams",
   "main": "index.js",
   "directories": {

@@ -39,7 +39,7 @@ const options = {
 }
 var proxy = httpProxy.createProxyServer(options)
 var app = connect()
-app.use(httpProxyInterceptor(interceptorFactory), {headers: {'content-type': /text\/html/}})
+app.use(httpProxyInterceptor(interceptorFactory, {headers: {'content-type': /text\/html/}}))
 app.use(function(req, res) {
 	proxy.web(req, res)
 })

@@ -19,7 +19,7 @@ If no filter is passed, all responses are intercepted.
 ```javascript
 const connect = require('connect')
 const http = require('http')
-const httpProxy = require('node-http-proxy')
+const httpProxy = require('http-proxy')
 const httpProxyInterceptor = require('http-proxy-interceptor')
 
 var interceptorFactory = function(req, res) {

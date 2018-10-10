@@ -64,7 +64,16 @@ module.exports = function httpProxyInterceptor(interceptorFactory, filter) {
 					res.isCompressed = true
 				}
 			}
-			res.decompressor.pipe(res.interceptor).pipe(res.compressor)
+			if (Array.isArray(res.interceptor)) {
+				res.decompressor.pipe(res.interceptor[0])
+				for (var i = 1; i < res.interceptor.length; i++) {
+					res.interceptor[i-1].pipe(res.interceptor[i])
+				}
+				res.interceptor[res.interceptor.length - 1].pipe(res.compressor)
+			}
+			else {
+				res.decompressor.pipe(res.interceptor).pipe(res.compressor)
+			}
 
 			res.compressor.on('data', function(chunk) {
 				_write.call(res, chunk)

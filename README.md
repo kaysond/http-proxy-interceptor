@@ -5,9 +5,9 @@
 
 ## Usage
 ```javascript
-httpProxyInterceptor(interceptorFactory, [filter])
+httpProxyInterceptor(interceptorFactory[, filter])
 ```
-`interceptorFactory` is a required `callable` that receives two arguments (`req` and `res`) and should return a [Transform Stream](https://nodejs.org/dist/latest-v10.x/docs/api/stream.html#stream_implementing_a_transform_stream). This stream receives and transforms the http response body.
+`interceptorFactory` is a required `callable` that receives two arguments (`req` and `res`) and should return a [Transform Stream](https://nodejs.org/dist/latest-v10.x/docs/api/stream.html#stream_implementing_a_transform_stream). This stream receives and transforms the http response body. `interceptorFactory` can also return an `Array` of Transform Streams. In this case, the constituent streams will be turned into a pipe chain, with the first array element being first in the chain, etc.
 
 `filter` is an optional `Object` with one or two properties:
 * `url`: a `RegExp` against which ***request*** URL's are tested. Only responses whose request URL matches get intercepted
@@ -27,7 +27,7 @@ var interceptorFactory = function(req, res) {
     if (/\.css$/.test(req.url))
         return new cssModifyingStream()
     else
-        return new otherModifyingStream()
+        return [new otherModifyingStream(), new otherModifyingStream(withArguments)]
 }
 
 const filter = {

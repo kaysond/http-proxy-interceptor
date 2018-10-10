@@ -200,6 +200,36 @@ describe('Interception', function() {
 			done()
 		})
 	})
+	it('should properly chain multiple interceptor streams', function (done) {
+		const interceptor1 = new stream.Transform({
+			transform(chunk, encoding, callback) {
+				this.push(Buffer.concat([chunk, new Buffer.from("bar")]))
+				callback()
+			}
+		})
+		const interceptor2 = new stream.Transform({
+			transform(chunk, encoding, callback) {
+				this.push(Buffer.concat([chunk, new Buffer.from("baz")]))
+				callback()
+			}
+		})
+		const proxyInterceptor = httpProxyInterceptor(function() { return [interceptor1, interceptor2] })		
+		const port = gen.port
+		const server = http.createServer(function(req, res) {
+			proxyInterceptor(req, res, new Function())
+			res.write('foo')
+			res.end('foo')
+		}).listen(port)
+		http.get(`http://localhost:${port}/`, function(res) {
+			var body = ''
+			res.on('data', chunk => { body += chunk.toString() })
+			res.on('end', function() {
+				expect(body).to.equal('foobarbazfoobarbaz')
+				server.close()
+				done()
+			})
+		}).end()
+	})
 })
 
 describe('Compression', function() {

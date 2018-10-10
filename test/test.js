@@ -33,7 +33,7 @@ describe('Filtering', function() {
 
 	beforeEach(function() {
 		intercepted = false
-		interceptor = new stream.PassThrough
+		interceptor = new stream.PassThrough()
 		interceptor.on('end', () => {
 			intercepted = true
 		})
@@ -339,6 +339,12 @@ describe('Middleware', function() {
 		res.end('foo bar')
 	}).listen(remotePort)
 
+	var intercepted, intercepted2
+	beforeEach(() => {
+		intercepted = false
+		intercepted2 = false
+	})
+
 	var interceptorFactory = function() {
 		interceptor = new stream.PassThrough()
 		interceptor.on('end', function() {
@@ -347,10 +353,13 @@ describe('Middleware', function() {
 		return interceptor
 	}
 
-	var intercepted
-	beforeEach(() => {
-		intercepted = false
-	})
+	var interceptorFactory2 = function() {
+		interceptor = new stream.PassThrough()
+		interceptor.on('end', function() {
+			intercepted2 = true
+		})
+		return interceptor
+	}
 
 	after(() => {
 		remoteServer.close()
@@ -378,6 +387,29 @@ describe('Middleware', function() {
 				})
 			}).end()
 		})
+		it('should support using multiple instantiations', function(done) {
+			const proxy = httpProxy.createProxyServer({target: `http://localhost:${remotePort}/`})
+			const app = connect()
+			app.use(httpProxyInterceptor(interceptorFactory))
+			app.use(httpProxyInterceptor(interceptorFactory2))
+			app.use(function(req, res) {
+				proxy.web(req, res)
+			})
+			const localPort = gen.port
+			const localServer = http.createServer(app).listen(localPort)
+
+			http.get(`http://localhost:${localPort}/`, function(res) {
+				var body = ''
+				res.on('data', chunk => { body += chunk.toString() })
+				res.on('end', function() {
+					expect(intercepted).to.be.true
+					expect(intercepted2).to.be.true
+					expect(body).to.equal('foo bar')
+					localServer.close()
+					done()
+				})
+			}).end()
+		})
 	})
 	describe('express', function() {
 		it('should properly intercept and pass responses', function(done) {
@@ -395,6 +427,29 @@ describe('Middleware', function() {
 				res.on('data', chunk => { body += chunk.toString() })
 				res.on('end', function() {
 					expect(intercepted).to.be.true
+					expect(body).to.equal('foo bar')
+					localServer.close()
+					done()
+				})
+			}).end()
+		})
+		it('should support using multiple instantiations', function(done) {
+			const proxy = httpProxy.createProxyServer({target: `http://localhost:${remotePort}/`})
+			const app = express()
+			app.use(httpProxyInterceptor(interceptorFactory))
+			app.use(httpProxyInterceptor(interceptorFactory2))
+			app.use(function(req, res) {
+				proxy.web(req, res)
+			})
+			const localPort = gen.port
+			const localServer = app.listen(localPort)
+
+			http.get(`http://localhost:${localPort}/`, function(res) {
+				var body = ''
+				res.on('data', chunk => { body += chunk.toString() })
+				res.on('end', function() {
+					expect(intercepted).to.be.true
+					expect(intercepted2).to.be.true
 					expect(body).to.equal('foo bar')
 					localServer.close()
 					done()

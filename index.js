@@ -13,76 +13,75 @@ module.exports = function httpProxyInterceptor(interceptorFactory, filter) {
 		_filter.headers = headersLC
 	}
 
-	function prepareInterceptor(req, res) {
-		var _write     = res.write
-		var _end       = res.end
-		var _writeHead = res.writeHead
+	var _write, _writeHead, _end, _isCompressed, _headersChecked, _intercept, _decompressor, _compressor, _interceptor
 
-		res.interceptor = _interceptorFactory.call(null, req, res)
-
-		//Assume response is uncompressed by default
-		res.isCompressed = false
-		res.decompressor = new stream.PassThrough()
-		res.compressor = new stream.PassThrough()
-
-		//Check headers for encoding and match before first _write()
-		res.headersChecked = false
-
-		//Don't intercept unless its a match
-		res.intercept = false
-
-		res.checkHeaders = function(headers) {
-			if (_filter.headers) {
-				for (var headerName in _filter.headers) {
-					var reqHeader = res.getHeader(headerName) || (headers ? headers[headerName] : undefined)
-					if (typeof reqHeader == 'undefined' || !_filter.headers[headerName].test(reqHeader)) {
-						res.intercept = false
-						break
-					}
-					else {
-						res.intercept = true
-					}
+	function _checkHeaders(res, headers) {
+		if (_filter.headers) {
+			for (var headerName in _filter.headers) {
+				var reqHeader = res.getHeader(headerName) || (headers ? headers[headerName] : undefined)
+				if (typeof reqHeader == 'undefined' || !_filter.headers[headerName].test(reqHeader)) {
+					_intercept = false
+					break
+				}
+				else {
+					_intercept = true
 				}
 			}
-			else {
-				res.intercept = true
-			}
-		}	
-
-		res.checkEncoding = function(headers) {
-			var contentEncoding = res.getHeader('content-encoding') || (headers ? headers['content-encoding'] : undefined)
-
-			if (typeof contentEncoding != 'undefined') {
-				if (/\bgzip\b/.test(contentEncoding)) { //not RFC compliant testing
-					res.compressor = zlib.createGzip()
-					res.decompressor = zlib.createGunzip()
-					res.isCompressed = true
-				}
-				else if (/\bdeflate\b/.test(contentEncoding)) {
-					res.compressor = zlib.createDeflate()
-					res.decompressor = zlib.createInflate()
-					res.isCompressed = true
-				}
-			}
-			if (Array.isArray(res.interceptor)) {
-				res.decompressor.pipe(res.interceptor[0])
-				for (var i = 1; i < res.interceptor.length; i++) {
-					res.interceptor[i-1].pipe(res.interceptor[i])
-				}
-				res.interceptor[res.interceptor.length - 1].pipe(res.compressor)
-			}
-			else {
-				res.decompressor.pipe(res.interceptor).pipe(res.compressor)
-			}
-
-			res.compressor.on('data', function(chunk) {
-				_write.call(res, chunk)
-			})
-
-			res.compressor.on('end', function(chunk) {
-				_end.call(res, chunk)
-			})
 		}
+		else {
+			_intercept = true
+		}
+	}
+
+	function _checkEncoding(res, headers) {
+		var contentEncoding = res.getHeader('content-encoding') || (headers ? headers['content-encoding'] : undefined)
+
+		if (typeof contentEncoding != 'undefined') {
+			if (/\bgzip\b/.test(contentEncoding)) { //not RFC compliant testing
+				_compressor = zlib.createGzip()
+				_decompressor = zlib.createGunzip()
+				_isCompressed = true
+			}
+			else if (/\bdeflate\b/.test(contentEncoding)) {
+				_compressor = zlib.createDeflate()
+				_decompressor = zlib.createInflate()
+				_isCompressed = true
+			}
+		}
+		if (Array.isArray(_interceptor)) {
+			_decompressor.pipe(_interceptor[0])
+			for (var i = 1; i < _interceptor.length; i++) {
+				_interceptor[i-1].pipe(_interceptor[i])
+			}
+			_interceptor[_interceptor.length - 1].pipe(_compressor)
+		}
+		else {
+			_decompressor.pipe(_interceptor).pipe(_compressor)
+		}
+
+		_compressor.on('data', function(chunk) {
+			_write.call(res, chunk)
+		})
+
+		_compressor.on('end', function(chunk) {
+			_end.call(res, chunk)
+		})
+	}
+
+	function _prepareInterceptor(req, res) {
+		_write     = res.write
+		_end       = res.end
+		_writeHead = res.writeHead
+
+		_interceptor = _interceptorFactory.call(null, req, res)
+
+		_headersChecked = false
+		_intercept = false
+
+		//Assume uncompressed
+		_isCompressed = false
+		_decompressor = new stream.PassThrough()
+		_compressor = new stream.PassThrough()
 
 		res.writeHead = function() {
 			var code = arguments[0]
@@ -93,13 +92,14 @@ module.exports = function httpProxyInterceptor(interceptorFactory, filter) {
 				headersLC[header.toLowerCase()] = headers[header]
 			}
 
-			if (!res.headersChecked) {
-				res.checkHeaders(headersLC)
+			if (!_headersChecked) {
+				_checkHeaders(res, headersLC)
+				if (_intercept) {
+					_checkEncoding(res, headersLC)
+				}
+				_headersChecked = true
 			}
-			if (!res.headersChecked && res.intercept) {
-				res.checkEncoding(headersLC)
-			}
-			if (res.intercept && !res.headersSent) {
+			if (_intercept && !res.headersSent) {
 				//Strip off the content length since chunked encoding must be used
 				res.removeHeader('content-length')
 				if (typeof headers == 'object') {
@@ -109,21 +109,20 @@ module.exports = function httpProxyInterceptor(interceptorFactory, filter) {
 					}
 				}
 			}
-			res.headersChecked = true
 			_writeHead.apply(res, arguments)
 		}
 
 		res.write = function(data, encoding) {
 			//In case writeHead() hasn't been called yet
-			if (!res.headersChecked) {
-				res.checkHeaders()
-				if (res.intercept) {
-					res.checkEncoding()
+			if (!_headersChecked) {
+				_checkHeaders(res)
+				if (_intercept) {
+					_checkEncoding(res)
 				}
-				res.headersChecked = true
+				_headersChecked = true
 			}
-			if (res.intercept) {
-				res.decompressor.write(data, encoding)
+			if (_intercept) {
+				_decompressor.write(data, encoding)
 			}
 			else {
 				_write.apply(res, arguments)
@@ -132,15 +131,15 @@ module.exports = function httpProxyInterceptor(interceptorFactory, filter) {
 
 		res.end = function(data, encoding) {
 			//In case writeHead() or write() haven't been called yet
-			if (!res.headersChecked) {
-				res.checkHeaders()
-				if (res.intercept) {
-					res.checkEncoding()
+			if (!_headersChecked) {
+				_checkHeaders(res)
+				if (_intercept) {
+					_checkEncoding(res)
 				}
-				res.headersChecked = true
+				_headersChecked = true
 			}
-			if (res.intercept) {
-				res.decompressor.end(data, encoding)
+			if (_intercept) {
+				_decompressor.end(data, encoding)
 			}
 			else {
 				_end.apply(res, arguments)
@@ -150,7 +149,7 @@ module.exports = function httpProxyInterceptor(interceptorFactory, filter) {
 
 	return function httpProxyInterceptor(req, res, next) {
 		if (!_filter.url || _filter.url.test(decodeURI(req.url))) {
-			prepareInterceptor(req, res)
+			_prepareInterceptor(req, res)
 		}
 
 		next()

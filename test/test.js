@@ -1,3 +1,4 @@
+'use strict'
 const expect = require('chai').expect
 const connect = require('connect')
 const express = require('express')
@@ -157,7 +158,7 @@ describe('Interception', function() {
 		const port = gen.port
 		const server = http.createServer(function(req, res) {
 			proxyInterceptor(req, res, new Function())
-			res.writeHead(200, {'content-length': 3, 'ContenT-lEnGth': 6})
+			res.writeHead(200, {'ContenT-lEnGth': 6})
 			res.write('foo')
 			res.end('bar')
 		}).listen(port)
@@ -173,12 +174,39 @@ describe('Interception', function() {
 			})
 		}).end()
 	})
+	it('should not affect headers (except content-length)', function(done) {
+		const proxyInterceptor = httpProxyInterceptor(function() { return new stream.PassThrough() })		
+		const port = gen.port
+		const server = http.createServer(function(req, res) {
+			proxyInterceptor(req, res, new Function())
+			res.writeHead(200, {
+				foo: 'bar',
+				bar: 'foo'
+			})
+			res.write('foo')
+			res.end('foo')
+		}).listen(port)
+		http.get(`http://localhost:${port}/`, function(res) {
+			expect(res.headers.foo).to.equal('bar')
+			expect(res.headers.bar).to.equal('foo')
+			expect(res.headers['content-length']).to.be.undefined		
+			var body = ''
+			res.on('data', chunk => { body += chunk.toString() })
+			res.on('end', function() {
+				expect(body).to.equal('foofoo')
+				server.close()
+				done()
+			})
+		}).end()
+	})
+
+	//This test may not actually send the requests fast enough to cause any problems
 	it('should handle multiple simultaneous requests', function(done) {
 		const proxyInterceptor = httpProxyInterceptor(function() { return new stream.PassThrough() })		
 		const port = gen.port
 		const server = http.createServer(function(req, res) {
 			proxyInterceptor(req, res, new Function())
-			res.writeHead(200, {'content-length': 3, 'ContenT-lEnGth': 6})
+			res.writeHead(200, {'ContenT-lEnGth': 6})
 			res.write('foo')
 			res.end('bar')
 		}).listen(port)
@@ -194,8 +222,8 @@ describe('Interception', function() {
 			}).end()
 		}
 
-		Promise.all([new Promise(httpGetPromise), new Promise(httpGetPromise)]).then(values => {
-			expect(values).to.deep.equal([true, true])
+		Promise.all([new Promise(httpGetPromise), new Promise(httpGetPromise), new Promise(httpGetPromise)]).then(values => {
+			expect(values).to.deep.equal([true, true, true])
 			server.close()
 			done()
 		})
@@ -346,7 +374,7 @@ describe('Middleware', function() {
 	})
 
 	var interceptorFactory = function() {
-		interceptor = new stream.PassThrough()
+		var interceptor = new stream.PassThrough()
 		interceptor.on('end', function() {
 			intercepted = true
 		})
@@ -354,7 +382,7 @@ describe('Middleware', function() {
 	}
 
 	var interceptorFactory2 = function() {
-		interceptor = new stream.PassThrough()
+		var interceptor = new stream.PassThrough()
 		interceptor.on('end', function() {
 			intercepted2 = true
 		})

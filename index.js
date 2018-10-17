@@ -1,3 +1,4 @@
+'use strict'
 const zlib = require('zlib')
 const stream = require('stream')
 
@@ -13,145 +14,149 @@ module.exports = function httpProxyInterceptor(interceptorFactory, filter) {
 		_filter.headers = headersLC
 	}
 
-	var _write, _writeHead, _end, _isCompressed, _headersChecked, _intercept, _decompressor, _compressor, _interceptor
+	function attachInterceptor(req, res, filter, factory) {
+		//Prepare interception framework
+		if (typeof res.interceptor === 'undefined') {
+			res.interceptor = new interceptor(res)
 
-	function _checkHeaders(res, headers) {
-		if (_filter.headers) {
-			for (var headerName in _filter.headers) {
-				var reqHeader = res.getHeader(headerName) || (headers ? headers[headerName] : undefined)
-				if (typeof reqHeader == 'undefined' || !_filter.headers[headerName].test(reqHeader)) {
-					_intercept = false
-					break
-				}
-				else {
-					_intercept = true
-				}
+			res.writeHead = function() {
+				var headers = (arguments.length > 2) ? arguments[2] : arguments[1] //writeHead() supports (statusCode, headers) as well as (statusCode, statusMessage, headers)
+				res.interceptor.checkHeaders(req, res, headers)
+				res.interceptor.writeHeadOrig.apply(res, arguments)
 			}
-		}
-		else {
-			_intercept = true
-		}
-	}
 
-	function _checkEncoding(res, headers) {
-		var contentEncoding = res.getHeader('content-encoding') || (headers ? headers['content-encoding'] : undefined)
+			res.write = function(data, encoding) {
+				//In case writeHead() hasn't been called yet
+				res.interceptor.checkHeaders(req, res)				
+				res.interceptor.write(data, encoding)
+			}
 
-		if (typeof contentEncoding != 'undefined') {
-			if (/\bgzip\b/.test(contentEncoding)) { //not RFC compliant testing
-				_compressor = zlib.createGzip()
-				_decompressor = zlib.createGunzip()
-				_isCompressed = true
+			res.end = function(data, encoding) {
+				//In case writeHead() or write() haven't been called yet
+				res.interceptor.checkHeaders(req, res)
+				res.interceptor.end(data, encoding)
 			}
-			else if (/\bdeflate\b/.test(contentEncoding)) {
-				_compressor = zlib.createDeflate()
-				_decompressor = zlib.createInflate()
-				_isCompressed = true
-			}
-		}
-		if (Array.isArray(_interceptor)) {
-			_decompressor.pipe(_interceptor[0])
-			for (var i = 1; i < _interceptor.length; i++) {
-				_interceptor[i-1].pipe(_interceptor[i])
-			}
-			_interceptor[_interceptor.length - 1].pipe(_compressor)
-		}
-		else {
-			_decompressor.pipe(_interceptor).pipe(_compressor)
+
 		}
 
-		_compressor.on('data', function(chunk) {
-			_write.call(res, chunk)
-		})
-
-		_compressor.on('end', function(chunk) {
-			_end.call(res, chunk)
-		})
-	}
-
-	function _prepareInterceptor(req, res) {
-		_write     = res.write
-		_end       = res.end
-		_writeHead = res.writeHead
-
-		_interceptor = _interceptorFactory.call(null, req, res)
-
-		_headersChecked = false
-		_intercept = false
-
-		//Assume uncompressed
-		_isCompressed = false
-		_decompressor = new stream.PassThrough()
-		_compressor = new stream.PassThrough()
-
-		res.writeHead = function() {
-			var code = arguments[0]
-			var headers = (arguments.length > 2) ? arguments[2] : arguments[1] //writeHead() supports (statusCode, headers) as well as (statusCode, statusMessage, headers)
-
-			var headersLC = {}
-			for (header in headers) {
-				headersLC[header.toLowerCase()] = headers[header]
-			}
-
-			if (!_headersChecked) {
-				_checkHeaders(res, headersLC)
-				if (_intercept) {
-					_checkEncoding(res, headersLC)
-				}
-				_headersChecked = true
-			}
-			if (_intercept && !res.headersSent) {
-				//Strip off the content length since chunked encoding must be used
-				res.removeHeader('content-length')
-				if (typeof headers == 'object') {
-					for (var header in headers) {
-						if (header.toLowerCase() == 'content-length')
-							delete headers[header]
-					}
-				}
-			}
-			_writeHead.apply(res, arguments)
-		}
-
-		res.write = function(data, encoding) {
-			//In case writeHead() hasn't been called yet
-			if (!_headersChecked) {
-				_checkHeaders(res)
-				if (_intercept) {
-					_checkEncoding(res)
-				}
-				_headersChecked = true
-			}
-			if (_intercept) {
-				_decompressor.write(data, encoding)
-			}
-			else {
-				_write.apply(res, arguments)
-			}
-		}
-
-		res.end = function(data, encoding) {
-			//In case writeHead() or write() haven't been called yet
-			if (!_headersChecked) {
-				_checkHeaders(res)
-				if (_intercept) {
-					_checkEncoding(res)
-				}
-				_headersChecked = true
-			}
-			if (_intercept) {
-				_decompressor.end(data, encoding)
-			}
-			else {
-				_end.apply(res, arguments)
-			}
-		}
+		res.interceptor.add(filter, factory)
 	}
 
 	return function httpProxyInterceptor(req, res, next) {
 		if (!_filter.url || _filter.url.test(decodeURI(req.url))) {
-			_prepareInterceptor(req, res)
+			attachInterceptor(req, res, _filter.headers, _interceptorFactory)
 		}
 
 		next()
 	}
 }
+
+class interceptor {
+	constructor(res) {
+		this.filters         = new Array()
+		this.streamFactories = new Array()
+		this.streams         = new Array()
+		this.decompressor    = new stream.PassThrough()
+		this.compressor      = new stream.PassThrough()
+		this.writeOrig       = res.write
+		this.endOrig         = res.end
+		this.writeHeadOrig   = res.writeHead
+		this.headersChecked  = false
+	}
+
+	add(filter, factory) {
+		this.filters.push(filter)
+		this.streamFactories.push(factory)
+	}
+
+	write(data, encoding) {
+		this.decompressor.write(data, encoding)
+	}
+
+	end(data, encoding) {
+
+		this.decompressor.end(data, encoding)
+	}
+
+	checkHeaders(req, res, headers) {
+		if (!this.headersChecked) {
+			for (var i = 0; i < this.filters.length; i++) {
+				//Always add streams where there was no header filter
+				if (typeof this.filters[i] === 'undefined') {
+					var streams = this.streamFactories[i].call(null, req, res)
+					if (typeof streams[Symbol.iterator] === 'function')+
+						this.streams.push(...streams)
+					else
+						this.streams.push(streams)
+				}
+				else {
+					var filterMatched = true
+					for (var headerName in this.filters[i]) {
+						var reqHeader = res.getHeader(headerName) || (headers ? headers[headerName] : undefined)
+						if (typeof reqHeader === 'undefined' || !this.filters[i][headerName].test(reqHeader)) {
+							filterMatched = false
+							break
+						}
+					}
+					if (filterMatched) {
+						var streams = this.streamFactories[i].call(null, req, res)
+						if (typeof streams[Symbol.iterator] === 'function')
+							this.streams.push(...streams)
+						else
+							this.streams.push(streams)
+					}
+				}
+			}
+
+			if (this.streams.length > 0) {
+				//Remove content length headers since it must be sent chunked
+				res.removeHeader('content-length')
+				if (typeof headers === 'object') {
+					for (var header in headers) {
+						if (header.toLowerCase() == 'content-length')
+							delete headers[header]
+					}
+				}
+
+				var contentEncoding = res.getHeader('content-encoding')
+				if (typeof contentEncoding === 'undefined' && typeof headers === 'object') {
+					for (var header in headers) {
+						if (header.toLowerCase() == 'content-encoding')
+							contentEncoding = headers[header]
+					}
+				}
+
+				if (typeof contentEncoding !== 'undefined') {
+					if (/\bgzip\b/.test(contentEncoding)) { //not RFC compliant testing
+						this.compressor = zlib.createGzip()
+						this.decompressor = zlib.createGunzip()
+					}
+					else if (/\bdeflate\b/.test(contentEncoding)) {
+						this.compressor = zlib.createDeflate()
+						this.decompressor = zlib.createInflate()
+					}
+				}
+				
+				this.decompressor.pipe(this.streams[0])
+				for (var i = 1; i < this.streams.length; i++) {
+					this.streams[i-1].pipe(this.streams[i])
+				}
+				this.streams[this.streams.length-1].pipe(this.compressor)
+			}
+			else {
+				//Write directly to the response if there is no interception
+				this.decompressor.pipe(this.compressor)
+			}
+
+			this.compressor.on('data', function(chunk) {
+				this.writeOrig.call(res, chunk)
+			}.bind(this))
+
+			this.compressor.on('end', function(chunk) {
+				this.endOrig.call(res, chunk)
+			}.bind(this))
+
+			this.headersChecked = true
+		}
+	} //checkHeaders()
+} //class interceptor

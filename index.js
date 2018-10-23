@@ -78,18 +78,24 @@ class interceptor {
 		this.decompressor.end(data, encoding)
 	}
 
+	addStreams(idx, req, res) {
+		var streams = this.streamFactories[idx].call(null, req, res)
+		if (typeof streams[Symbol.iterator] === 'function') {
+			for (var stream of streams) {
+				this.streams.push(stream)
+			}
+		}
+		else {
+			this.streams.push(streams)
+		}
+	}
+
 	checkHeaders(req, res, headers) {
 		if (!this.headersChecked) {
 			for (var i = 0; i < this.filters.length; i++) {
 				//Always add streams where there was no header filter
 				if (typeof this.filters[i] === 'undefined') {
-					var streams = this.streamFactories[i].call(null, req, res)
-					if (typeof streams[Symbol.iterator] === 'function')
-						for (var stream of streams) {						
-							this.streams.push(stream)
-						}
-					else
-						this.streams.push(streams)
+					this.addStreams(i, req, res)
 				}
 				else {
 					var filterMatched = true
@@ -101,11 +107,7 @@ class interceptor {
 						}
 					}
 					if (filterMatched) {
-						var streams = this.streamFactories[i].call(null, req, res)
-						if (typeof streams[Symbol.iterator] === 'function')
-							this.streams.push(...streams)
-						else
-							this.streams.push(streams)
+						this.addStreams(i, req, res)
 					}
 				}
 			}

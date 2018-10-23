@@ -84,8 +84,10 @@ class interceptor {
 				//Always add streams where there was no header filter
 				if (typeof this.filters[i] === 'undefined') {
 					var streams = this.streamFactories[i].call(null, req, res)
-					if (typeof streams[Symbol.iterator] === 'function')+
-						this.streams.push(...streams)
+					if (typeof streams[Symbol.iterator] === 'function')
+						for (var stream of streams) {						
+							this.streams.push(stream)
+						}
 					else
 						this.streams.push(streams)
 				}

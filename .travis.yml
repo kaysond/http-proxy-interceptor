@@ -7,4 +7,4 @@ node_js:
   - "lts/*"
 notifications:
   email:
-    - kaysond@hotmail.com
+    - github@aram.nubmail.ca
